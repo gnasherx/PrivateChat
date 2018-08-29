@@ -1,24 +1,32 @@
+package chat;
+
+import javax.crypto.Cipher;
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.*;
 import java.rmi.Naming;
 import java.rmi.RemoteException;
 import java.rmi.server.UnicastRemoteObject;
+import java.security.PrivateKey;
+import java.security.PublicKey;
 import java.util.Enumeration;
 import java.util.Vector;
 
 public class Client extends JFrame implements PrivateChatClientInterface, ActionListener {
-    Container container;
-    JTextArea jTextArea;
-    JTextField jTextField;
-    JLabel jLabel;
-    JButton jButton;
-    JList list;
-    JScrollPane jsp1, jsp2;
-    DefaultListModel model;
-    PrivateChatServerInterface ref;
-    PrivateChatClientInterface clientRef;
+    private Container container;
+    private JTextArea jTextArea;
+    private JTextField jTextField;
+    private JLabel jLabel;
+    private JButton jButton;
+    private JList list;
+    private JScrollPane jsp1, jsp2;
+    private DefaultListModel model;
+    private PrivateChatServerInterface ref;
+    private PrivateChatClientInterface clientRef;
     private String clientName;
+    private Object[] keysA, keysB;
+    private PrivateKey privateKeyA, privateKeyB;
+    private PublicKey publicKeyA, publicKeyB;
 
     public Client(String name) {
         super("Chat client: " + name);
@@ -59,11 +67,17 @@ public class Client extends JFrame implements PrivateChatClientInterface, Action
         setVisible(true);
 
         try {
-            System.setProperty("java.rmi.server.hostname", "192.168.0.6");
+            System.setProperty("java.rmi.server.hostname", "192.168.0.5");
             ref = (PrivateChatServerInterface) Naming.lookup("rmi://localhost:1099/chat");
             UnicastRemoteObject.exportObject(this);
 
             ref.login(clientName, this);
+
+//            Get the keys from Server
+            keysA = ref.sendKeysA(this);
+            privateKeyA = (PrivateKey) keysA[0];
+            publicKeyA = (PublicKey) keysA[1];
+
 
         } catch (Exception e) {
             System.err.println(e);
@@ -72,13 +86,12 @@ public class Client extends JFrame implements PrivateChatClientInterface, Action
         addWindowListener(new WindowAdapter() {
             @Override
             public void windowClosing(WindowEvent e) {
-                try {
-                    System.out.println("Inside addWindowCloseListener");
-                    ref.logout(clientName, Client.this);
-
-                } catch (RemoteException expression) {
-                    System.err.println(expression);
-                }
+//                try {
+//                    ref.logout(clientName, chat.Client.this);
+//
+//                } catch (RemoteException expression) {
+//                    System.err.println(expression);
+//                }
 
             }
         });
@@ -91,11 +104,16 @@ public class Client extends JFrame implements PrivateChatClientInterface, Action
             public void mouseClicked(MouseEvent e) {
                 String selectedName = (String) list.getSelectedValue();
 
+
                 Color green = Color.decode("#329832");
                 jLabel.setForeground(green);
                 jLabel.setText(selectedName + " is online");
                 try {
                     clientRef = ref.sendClientRef(selectedName);
+                    keysB = ref.sendKeysB(selectedName);
+                    privateKeyB = (PrivateKey) keysB[0];
+                    publicKeyB = (PublicKey) keysB[1];
+
                 } catch (RemoteException e1) {
                     e1.printStackTrace();
                 }
@@ -109,15 +127,39 @@ public class Client extends JFrame implements PrivateChatClientInterface, Action
         new Client(args[0]);
     }
 
+    public static byte[] encrypt(PublicKey publicKey, String message) throws Exception {
+        Cipher cipher = Cipher.getInstance("RSA");
+        cipher.init(Cipher.ENCRYPT_MODE, publicKey);
+
+        return cipher.doFinal(message.getBytes());
+    }
+
+    public static byte[] decrypt(PrivateKey privateKey, byte[] encrypted) throws Exception {
+        Cipher cipher = Cipher.getInstance("RSA");
+        cipher.init(Cipher.DECRYPT_MODE, privateKey);
+
+        return cipher.doFinal(encrypted);
+    }
+
     @Override
-    public void sendMessageToClient(String message) {
-        jTextArea.append(message + "\n");
+    public void sendMessageToClient(byte[] message) {
+
+//        now Decrypting the message
+        try {
+            byte[] secret = decrypt(privateKeyB, message);
+            System.out.println("message========> : " + secret);
+        } catch (Exception e) {
+            System.err.println("Error while decrypting and showing your message");
+            e.printStackTrace();
+        }
+//        jTextArea.append(se + "\n");
     }
 
     @Override
     public void getAllClientList(Vector<String> clients) {
 
-        clients.remove(new String(clientName));
+        clients.remove(clientName);
+
 
         SwingUtilities.invokeLater(new Runnable() {
             @Override
@@ -132,7 +174,6 @@ public class Client extends JFrame implements PrivateChatClientInterface, Action
         });
     }
 
-
     //    not completly implemented yet.
     @Override
     public void areYouChatingWith(String name, PrivateChatClientInterface offlineClientRef) {
@@ -146,11 +187,20 @@ public class Client extends JFrame implements PrivateChatClientInterface, Action
     @Override
     public void actionPerformed(ActionEvent e) {
         String message = jTextField.getText();
+        byte[] encrypted = new byte[2048]; ///////////////////////////////be Careful here//////////////////////////////
         message = clientName + ": " + message;
+
+//        Now Encrypting this message using private key
+        try {
+            encrypted = encrypt(publicKeyB, message);
+        } catch (Exception e1) {
+            System.err.println("Error while encrypting the message");
+            e1.printStackTrace();
+        }
 
         try {
             if (!jTextField.getText().isEmpty()) {
-                ref.sendMessageToServer(message, clientRef);
+                ref.sendMessageToServer(encrypted, clientRef);
             }
         } catch (Exception ex) {
             System.err.println(ex);
@@ -158,4 +208,5 @@ public class Client extends JFrame implements PrivateChatClientInterface, Action
 
         jTextField.setText("");
     }
+
 }
